@@ -33,7 +33,7 @@ const handleGeminiError = (error: any) => {
 
   // Check for 429 Quota or generic Quota messages
   if (errString.includes('429') || errMessage.includes('resource exhausted') || errMessage.includes('quota')) {
-    throw new Error("Quota Exceeded. You have hit the API rate limit. Please wait a moment and try again.");
+    throw new Error("Quota Exceeded (Limit Hit). Switching AI models might help.");
   }
 
   // Check for 400 Bad Request
@@ -49,8 +49,8 @@ const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const withRetry = async <T>(
   operation: () => Promise<T>,
-  retries: number = 3,
-  delay: number = 2000
+  retries: number = 5,
+  delay: number = 4000
 ): Promise<T> => {
   try {
     return await operation();
@@ -79,8 +79,6 @@ export const ensureApiKey = async (): Promise<boolean> => {
       const hasKey = await win.aistudio.hasSelectedApiKey();
       if (!hasKey) {
         await win.aistudio.openSelectKey();
-        // Return true immediately to handle race conditions where hasSelectedApiKey 
-        // might lag behind the UI selection.
         return true;
       }
       return true;
@@ -89,8 +87,44 @@ export const ensureApiKey = async (): Promise<boolean> => {
       return false;
     }
   }
-  // If not in AI Studio, assume environment variable is set
   return true;
+};
+
+// --- IMAGEN FALLBACK ---
+const generateWithImagen = async (prompt: string, aspectRatio: AspectRatio): Promise<string[]> => {
+  const ai = getClient();
+  
+  // Map to Imagen supported ratios
+  let ar = '1:1';
+  switch(aspectRatio) {
+    case AspectRatio.SQUARE: ar = '1:1'; break;
+    case AspectRatio.PORTRAIT_2_3: ar = '3:4'; break; 
+    case AspectRatio.LANDSCAPE_3_2: ar = '4:3'; break;
+    case AspectRatio.PORTRAIT_3_4: ar = '3:4'; break;
+    case AspectRatio.LANDSCAPE_4_3: ar = '4:3'; break;
+    case AspectRatio.PORTRAIT_9_16: ar = '9:16'; break;
+    case AspectRatio.LANDSCAPE_16_9: ar = '16:9'; break;
+    case AspectRatio.CINEMATIC_21_9: ar = '16:9'; break;
+    default: ar = '1:1';
+  }
+
+  console.log("Attempting generation with Imagen 3 fallback...");
+  const response = await ai.models.generateImages({
+    model: 'imagen-3.0-generate-001',
+    prompt: prompt,
+    config: {
+      numberOfImages: 1,
+      aspectRatio: ar,
+      outputMimeType: 'image/jpeg'
+    }
+  });
+
+  // @ts-ignore - SDK types might vary slightly, mapping manually
+  const generatedImages = (response as any).generatedImages || [];
+  
+  return generatedImages.map((img: any) => 
+    `data:image/jpeg;base64,${img.image.imageBytes}`
+  );
 };
 
 export const generateImage = async (
@@ -98,38 +132,26 @@ export const generateImage = async (
   aspectRatio: AspectRatio,
   resolution: ImageResolution,
   useProModel: boolean = true
-): Promise<string[]> => {
+): Promise<{images: string[], usedFallback: boolean}> => {
   const ai = getClient();
-  
-  // Select model based on user preference
   const modelName = useProModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
   
-  // API Config Logic
-  // 'imageSize' is ONLY supported by Gemini 3 Pro. We must omit it for Flash.
-  const imageConfig: any = {
-    aspectRatio: aspectRatio
-  };
-
+  const imageConfig: any = { aspectRatio: aspectRatio };
   if (useProModel) {
-    // Map 8K to 4K as per API limits
     const apiResolution = resolution === ImageResolution.RES_8K ? '4K' : resolution;
     imageConfig.imageSize = apiResolution;
   }
 
   const finalPrompt = resolution === ImageResolution.RES_8K && useProModel
-    ? `${prompt} (Highly detailed 8K resolution masterpiece, ultra-sharp, intricate details)` 
+    ? `${prompt} (Highly detailed 8K resolution masterpiece, ultra-sharp)` 
     : prompt;
 
   try {
-    // Wrap generation in retry logic
+    // 1. Try Gemini
     const response = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
       model: modelName,
-      contents: {
-        parts: [{ text: finalPrompt }]
-      },
-      config: {
-        imageConfig: imageConfig
-      }
+      contents: { parts: [{ text: finalPrompt }] },
+      config: { imageConfig: imageConfig }
     }));
 
     const images: string[] = [];
@@ -140,10 +162,28 @@ export const generateImage = async (
         }
       }
     }
-    return images;
-  } catch (error: any) {
-    handleGeminiError(error);
-    return []; // Unreachable
+    
+    if (images.length > 0) return { images, usedFallback: false };
+    throw new Error("Gemini returned no images");
+
+  } catch (geminiError: any) {
+    // 2. Fallback to Imagen 3 if Quota/Permission issue
+    const errStr = geminiError.toString().toLowerCase();
+    if (errStr.includes('429') || errStr.includes('403') || errStr.includes('quota') || errStr.includes('permission')) {
+      try {
+        const imagenImages = await generateWithImagen(prompt, aspectRatio);
+        if (imagenImages.length > 0) {
+          return { images: imagenImages, usedFallback: true };
+        }
+      } catch (imagenError) {
+        console.error("Imagen fallback also failed", imagenError);
+        // Throw original error to explain why the primary failed
+        handleGeminiError(geminiError);
+      }
+    }
+    
+    handleGeminiError(geminiError);
+    return { images: [], usedFallback: false };
   }
 };
 
@@ -158,58 +198,22 @@ export const editImage = async (
   const cleanBase64 = base64Image.split(',')[1] || base64Image;
 
   const arInstruction = aspectRatio 
-    ? `Adjust the output aspect ratio to ${aspectRatio}. If the new ratio is wider or taller than the original, use generative fill to extend the background seamlessly and realistically (outpainting).` 
-    : `Maintain the original aspect ratio.`;
-
-  const resInstruction = resolution 
-    ? `Ensure the output detail level matches ${resolution} resolution.` 
-    : `Output a high-quality image.`;
-
-  // Construct the Master Prompt based on user instruction
-  const masterPrompt = `
-[MODE: Gemini 2.5 Flash Image]
-"Edit the provided image according to the following instructions:
-
-USER INSTRUCTION: ${userPrompt}
-
-1. OBJECT REMOVAL
-- Remove the masked/described object or area seamlessly.
-- Fill background naturally and match scene lighting and textures.
-
-2. ADDITION (Optional)
-- If adding objects, ensure realistic shadows, perspective, and scale.
-- Integrate new elements smoothly into the environment.
-
-3. BACKGROUND CONTROL
-- Replace / extend / blur background if requested.
-- Keep lighting and depth consistent.
-
-4. STYLE
-- Preserve clarity, sharpness, and professional look.
-
-5. COLOR & TONE
-- Keep natural highlights and tones realistic unless specified otherwise.
-
-6. OUTPUT
-- ${resInstruction}
-- ${arInstruction}
-"`;
+    ? `Adjust aspect ratio to ${aspectRatio}. Fill new areas naturally (outpainting).` 
+    : `Maintain aspect ratio.`;
+  
+  const masterPrompt = `[MODE: Gemini 2.5 Flash Image] Instructions: ${userPrompt}. 1. Remove/Edit object. 2. Match lighting. 3. ${arInstruction}. 4. High quality output.`;
 
   try {
-    // Wrap editing in retry logic
+    // Image editing doesn't have a clean Imagen fallback in this SDK version
     const response = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
         parts: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: mimeType
-            }
-          },
+          { inlineData: { data: cleanBase64, mimeType: mimeType } },
           { text: masterPrompt }
         ]
-      }
+      },
+      config: aspectRatio ? { imageConfig: { aspectRatio: aspectRatio } } : {}
     }));
 
     if (response.candidates?.[0]?.content?.parts) {
@@ -222,7 +226,7 @@ USER INSTRUCTION: ${userPrompt}
     return null;
   } catch (error: any) {
     handleGeminiError(error);
-    return null; // Unreachable
+    return null;
   }
 };
 
@@ -230,28 +234,33 @@ export const sendChatMessage = async (
   history: { role: string; parts: { text: string }[] }[],
   message: string,
   mode: 'fast' | 'thinking'
-): Promise<AsyncGenerator<GenerateContentResponse, void, unknown>> => {
+): Promise<{ stream: AsyncGenerator<GenerateContentResponse, void, unknown>, usedFallback: boolean }> => {
   const ai = getClient();
   
-  let model = 'gemini-2.5-flash-lite';
-  let config: any = {};
+  const attemptChat = async (model: string, config: any) => {
+    const chat = ai.chats.create({ model, history, config });
+    return chat.sendMessageStream({ message });
+  };
 
-  if (mode === 'thinking') {
-    model = 'gemini-3-pro-preview';
-    config = {
-      thinkingConfig: {
-        thinkingBudget: 32768
-      }
-    };
+  try {
+    // Primary attempt
+    const model = mode === 'thinking' ? 'gemini-3-pro-preview' : 'gemini-2.5-flash-lite';
+    const config = mode === 'thinking' ? { thinkingConfig: { thinkingBudget: 32768 } } : {};
+    
+    const stream = await attemptChat(model, config);
+    return { stream, usedFallback: false };
+
+  } catch (error: any) {
+    // Fallback attempt for Thinking mode -> Fast mode
+    if (mode === 'thinking') {
+        console.warn("Thinking mode failed, falling back to Flash Lite...");
+        try {
+            const fallbackStream = await attemptChat('gemini-2.5-flash-lite', {});
+            return { stream: fallbackStream, usedFallback: true };
+        } catch (fallbackError) {
+            throw error; // Throw original
+        }
+    }
+    throw error;
   }
-
-  // Note: Streaming requests are harder to retry transparently mid-stream, 
-  // so we do not wrap this in withRetry. Connection issues usually require user intervention.
-  const chat = ai.chats.create({
-    model: model,
-    history: history,
-    config: config
-  });
-
-  return chat.sendMessageStream({ message });
 };

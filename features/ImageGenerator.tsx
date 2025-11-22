@@ -12,13 +12,14 @@ export const ImageGenerator: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Settings visibility toggle
   const [showSettings, setShowSettings] = useState(false);
+  const [usedFallback, setUsedFallback] = useState(false);
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || isGenerating) return;
     setIsGenerating(true);
     setError(null);
+    setUsedFallback(false);
 
     try {
       const hasKey = await ensureApiKey();
@@ -26,9 +27,13 @@ export const ImageGenerator: React.FC = () => {
         throw new Error("API Key selection cancelled or failed.");
       }
       
-      const images = await generateImage(prompt, aspectRatio, resolution, useProModel);
-      if (images && images.length > 0) {
-        setResultImage(images[0]);
+      const result = await generateImage(prompt, aspectRatio, resolution, useProModel);
+      if (result && result.images.length > 0) {
+        setResultImage(result.images[0]);
+        setUsedFallback(result.usedFallback);
+        
+        // Cooldown logic handled by isGenerating, but adding extra safety
+        await new Promise(r => setTimeout(r, 2000));
       } else {
         throw new Error("No image generated.");
       }
@@ -48,6 +53,11 @@ export const ImageGenerator: React.FC = () => {
         <div className="h-14 flex items-center justify-between px-6 border-b border-dark-border bg-dark-bg flex-shrink-0">
             <h1 className="font-semibold text-dark-text text-sm tracking-wide">Text to Image</h1>
             <div className="flex items-center gap-3">
+                 {usedFallback && (
+                     <span className="text-[10px] bg-blue-900/50 text-blue-300 px-2 py-1 rounded border border-blue-500/30 hidden sm:inline-block">
+                        <i className="fa-solid fa-robot mr-1"></i> Generated with Imagen 3 (Fallback)
+                     </span>
+                 )}
                  {resultImage && (
                      <a href={resultImage} download={`aurora-gen-${Date.now()}.png`} className="text-xs font-medium text-dark-muted hover:text-white transition-colors flex items-center gap-2 bg-dark-surface px-3 py-1.5 rounded-full border border-dark-border">
                         <i className="fa-solid fa-download"></i> <span className="hidden sm:inline">Download</span>
@@ -99,6 +109,7 @@ export const ImageGenerator: React.FC = () => {
                 <Button 
                     onClick={handleGenerate} 
                     isLoading={isGenerating}
+                    disabled={isGenerating}
                     className="!py-2 !px-4 text-xs md:text-sm flex-shrink-0"
                 >
                     Generate
@@ -114,7 +125,6 @@ export const ImageGenerator: React.FC = () => {
       </div>
 
       {/* Right Settings Panel */}
-      {/* Mobile: Absolute overlay. Desktop: Always visible. */}
       <div className={`
         w-80 bg-[#181818] border-l border-dark-border flex-col z-30 transition-transform duration-300 
         absolute right-0 top-14 bottom-0 
@@ -135,24 +145,24 @@ export const ImageGenerator: React.FC = () => {
                         onClick={() => setUseProModel(false)}
                         className={`flex-1 py-1.5 text-xs font-medium rounded transition-all ${!useProModel ? 'bg-dark-panel text-white shadow' : 'text-dark-muted hover:text-white'}`}
                     >
-                        Standard (Flash)
+                        Standard
                     </button>
                     <button 
                         onClick={() => setUseProModel(true)}
                         className={`flex-1 py-1.5 text-xs font-medium rounded transition-all ${useProModel ? 'bg-firefly-gradient text-white shadow' : 'text-dark-muted hover:text-white'}`}
                     >
-                        Pro (Gemini 3)
+                        Pro
                     </button>
                 </div>
                 {useProModel ? (
                     <p className="text-[10px] text-yellow-500/80 flex items-center gap-1.5 bg-yellow-500/10 p-2 rounded border border-yellow-500/20">
                         <i className="fa-solid fa-triangle-exclamation"></i> 
-                        <span>Billing required for Pro. Switch to Standard if generation fails.</span>
+                        <span>Auto-fallback to Imagen enabled.</span>
                     </p>
                 ) : (
                     <p className="text-[10px] text-blue-400/80 flex items-center gap-1.5">
                         <i className="fa-solid fa-check-circle"></i>
-                        <span>Optimized for speed & compatibility.</span>
+                        <span>Optimized for speed.</span>
                     </p>
                 )}
              </div>
@@ -223,7 +233,7 @@ export const ImageGenerator: React.FC = () => {
                         <p className="text-xs text-gray-300 font-medium mb-1">Prompt Tip</p>
                         <p className="text-[11px] text-gray-500 leading-relaxed">
                             {useProModel 
-                             ? 'For 8K results, include keywords like "highly detailed" and "intricate textures".' 
+                             ? 'System will automatically switch to Imagen 3 if Gemini hits quota limits.' 
                              : 'Standard mode is faster. Switch to Pro for complex text rendering.'}
                         </p>
                     </div>

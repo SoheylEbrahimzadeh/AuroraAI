@@ -49,7 +49,12 @@ export const ChatInterface: React.FC = () => {
         isThinking: isThinkingMode
       }]);
 
-      const stream = await sendChatMessage(history, userText, isThinkingMode ? 'thinking' : 'fast');
+      const { stream, usedFallback } = await sendChatMessage(history, userText, isThinkingMode ? 'thinking' : 'fast');
+      
+      if (usedFallback) {
+        // Optional: Notify user about downgrade?
+        // For now, we just let it happen seamlessly as per "continue working"
+      }
 
       let accumulatedText = '';
 
@@ -58,7 +63,7 @@ export const ChatInterface: React.FC = () => {
         if (chunkText) {
           accumulatedText += chunkText;
           setMessages(prev => prev.map(msg => 
-            msg.id === modelMsgId ? { ...msg, text: accumulatedText } : msg
+            msg.id === modelMsgId ? { ...msg, text: accumulatedText, isThinking: usedFallback ? false : isThinkingMode } : msg
           ));
         }
       }
@@ -73,20 +78,18 @@ export const ChatInterface: React.FC = () => {
       if (rawError.includes('403') || rawError.includes('permission')) {
         errorMsg = "Error (403): Permission Denied. Please check that Billing is enabled for this project and your API Key is valid.";
       } else if (rawError.includes('429')) {
-        errorMsg = "Error (429): Too many requests. Please wait a moment.";
+        errorMsg = "Error (429): Too many requests. I tried to switch models but all are busy. Please wait a moment.";
       } else if (err.message) {
         errorMsg = `Error: ${err.message}`;
       }
 
       setMessages(prev => {
-        // Remove the empty loading message if it exists
         const newHistory = [...prev];
         const lastMsg = newHistory[newHistory.length - 1];
         if (lastMsg.role === 'model' && !lastMsg.text) {
             lastMsg.text = errorMsg;
             return newHistory;
         }
-        // Otherwise append new error message
         return [...newHistory, {
             id: Date.now().toString(),
             role: 'model',
@@ -140,7 +143,7 @@ export const ChatInterface: React.FC = () => {
               {msg.role === 'model' && (
                 <div className="flex items-center gap-2 mb-3 text-[10px] font-bold uppercase tracking-wider opacity-60 text-dark-muted">
                    <i className={`fa-solid ${msg.isThinking ? 'fa-brain text-purple-400' : 'fa-bolt text-blue-400'}`}></i>
-                   {msg.isThinking ? 'Gemini 3 Pro' : 'Gemini 2.5 Flash'}
+                   {msg.isThinking ? 'Gemini 3 Pro' : 'Gemini 2.5 Flash / Lite'}
                 </div>
               )}
               <div className={`prose prose-invert prose-sm whitespace-pre-wrap leading-relaxed ${msg.text.includes('Error') ? 'text-red-400' : 'text-gray-300'}`}>
