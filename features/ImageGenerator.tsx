@@ -7,10 +7,12 @@ export const ImageGenerator: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(AspectRatio.SQUARE);
   const [resolution, setResolution] = useState<ImageResolution>(ImageResolution.RES_2K);
+  // Default to FALSE (Standard) to ensure free-tier keys work immediately
+  const [useProModel, setUseProModel] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Default to closed on mobile to prevent overlap, user can toggle
+  // Settings visibility toggle
   const [showSettings, setShowSettings] = useState(false);
 
   const handleGenerate = async () => {
@@ -24,7 +26,7 @@ export const ImageGenerator: React.FC = () => {
         throw new Error("API Key selection cancelled or failed.");
       }
       
-      const images = await generateImage(prompt, aspectRatio, resolution);
+      const images = await generateImage(prompt, aspectRatio, resolution, useProModel);
       if (images && images.length > 0) {
         setResultImage(images[0]);
       } else {
@@ -77,7 +79,7 @@ export const ImageGenerator: React.FC = () => {
                 </div>
                 <h3 className="text-lg font-semibold text-dark-text mb-2">Dream it. Make it.</h3>
                 <p className="text-dark-muted text-sm leading-relaxed">
-                    Enter a prompt below to generate high-fidelity images using Gemini 3 Pro.
+                    Enter a prompt below to generate high-fidelity images.
                 </p>
             </div>
             )}
@@ -103,7 +105,8 @@ export const ImageGenerator: React.FC = () => {
                 </Button>
             </div>
             {error && (
-                <div className="absolute bottom-24 left-4 right-4 md:left-auto md:right-auto bg-red-900/90 text-white text-xs px-4 py-2 rounded-lg backdrop-blur-md border border-red-500/30 animate-bounce text-center">
+                <div className="absolute bottom-24 left-4 right-4 md:left-auto md:right-auto max-w-lg mx-auto bg-red-900/95 text-white text-xs px-6 py-3 rounded-lg backdrop-blur-md border border-red-500/30 animate-bounce text-center shadow-xl z-50">
+                    <div className="font-bold mb-1">Error</div>
                     <i className="fa-solid fa-circle-exclamation mr-2"></i> {error}
                 </div>
             )}
@@ -111,7 +114,7 @@ export const ImageGenerator: React.FC = () => {
       </div>
 
       {/* Right Settings Panel */}
-      {/* Mobile: Absolute overlay (controlled by state). Desktop: Static sidebar (always visible). */}
+      {/* Mobile: Absolute overlay. Desktop: Always visible. */}
       <div className={`
         w-80 bg-[#181818] border-l border-dark-border flex-col z-30 transition-transform duration-300 
         absolute right-0 top-14 bottom-0 
@@ -123,6 +126,37 @@ export const ImageGenerator: React.FC = () => {
          </div>
          
          <div className="p-5 space-y-8 overflow-y-auto h-full pb-20 scrollbar-thin bg-[#181818]">
+             
+             {/* Model Selection */}
+             <div className="space-y-3">
+                <label className="text-xs font-bold text-dark-muted uppercase tracking-wider">Quality Mode</label>
+                <div className="flex bg-dark-surface p-1 rounded-lg border border-dark-border">
+                    <button 
+                        onClick={() => setUseProModel(false)}
+                        className={`flex-1 py-1.5 text-xs font-medium rounded transition-all ${!useProModel ? 'bg-dark-panel text-white shadow' : 'text-dark-muted hover:text-white'}`}
+                    >
+                        Standard (Flash)
+                    </button>
+                    <button 
+                        onClick={() => setUseProModel(true)}
+                        className={`flex-1 py-1.5 text-xs font-medium rounded transition-all ${useProModel ? 'bg-firefly-gradient text-white shadow' : 'text-dark-muted hover:text-white'}`}
+                    >
+                        Pro (Gemini 3)
+                    </button>
+                </div>
+                {useProModel ? (
+                    <p className="text-[10px] text-yellow-500/80 flex items-center gap-1.5 bg-yellow-500/10 p-2 rounded border border-yellow-500/20">
+                        <i className="fa-solid fa-triangle-exclamation"></i> 
+                        <span>Billing required for Pro. Switch to Standard if generation fails.</span>
+                    </p>
+                ) : (
+                    <p className="text-[10px] text-blue-400/80 flex items-center gap-1.5">
+                        <i className="fa-solid fa-check-circle"></i>
+                        <span>Optimized for speed & compatibility.</span>
+                    </p>
+                )}
+             </div>
+
              {/* Aspect Ratio */}
             <div className="space-y-3">
                 <label className="text-xs font-bold text-dark-muted uppercase tracking-wider">Aspect Ratio</label>
@@ -153,27 +187,33 @@ export const ImageGenerator: React.FC = () => {
             </div>
 
             {/* Content Type / Resolution */}
-            <div className="space-y-3">
-                <label className="text-xs font-bold text-dark-muted uppercase tracking-wider">Resolution</label>
-                <div className="flex flex-col gap-2">
-                    {Object.values(ImageResolution).map((res) => (
-                        <button
-                            key={res}
-                            onClick={() => setResolution(res)}
-                            className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium border transition-all ${
-                                resolution === res
-                                ? 'bg-dark-panel border-blue-500 text-white ring-1 ring-blue-500/50 shadow-lg shadow-blue-900/10'
-                                : 'bg-transparent border-dark-border text-dark-muted hover:border-gray-600 hover:text-dark-text'
-                            }`}
-                        >
-                            <div className="flex justify-between items-center">
-                                <span>{res} Ultra HD</span>
-                                {resolution === res && <i className="fa-solid fa-check text-blue-500"></i>}
-                            </div>
-                        </button>
-                    ))}
+            {useProModel ? (
+                <div className="space-y-3">
+                    <label className="text-xs font-bold text-dark-muted uppercase tracking-wider">Resolution</label>
+                    <div className="flex flex-col gap-2">
+                        {Object.values(ImageResolution).map((res) => (
+                            <button
+                                key={res}
+                                onClick={() => setResolution(res)}
+                                className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium border transition-all ${
+                                    resolution === res
+                                    ? 'bg-dark-panel border-blue-500 text-white ring-1 ring-blue-500/50 shadow-lg shadow-blue-900/10'
+                                    : 'bg-transparent border-dark-border text-dark-muted hover:border-gray-600 hover:text-dark-text'
+                                }`}
+                            >
+                                <div className="flex justify-between items-center">
+                                    <span>{res} Ultra HD</span>
+                                    {resolution === res && <i className="fa-solid fa-check text-blue-500"></i>}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
                 </div>
-            </div>
+            ) : (
+                 <div className="p-4 rounded-lg bg-dark-surface border border-dark-border opacity-70">
+                    <p className="text-xs text-dark-muted"><i className="fa-solid fa-lock mr-1"></i> High-Res controls locked in Standard mode.</p>
+                 </div>
+            )}
 
             {/* Info Box */}
             <div className="p-4 rounded-lg bg-dark-surface border border-dark-border">
@@ -182,7 +222,9 @@ export const ImageGenerator: React.FC = () => {
                     <div>
                         <p className="text-xs text-gray-300 font-medium mb-1">Prompt Tip</p>
                         <p className="text-[11px] text-gray-500 leading-relaxed">
-                            For 8K results, include keywords like "highly detailed", "intricate textures", and "studio lighting".
+                            {useProModel 
+                             ? 'For 8K results, include keywords like "highly detailed" and "intricate textures".' 
+                             : 'Standard mode is faster. Switch to Pro for complex text rendering.'}
                         </p>
                     </div>
                 </div>

@@ -63,13 +63,36 @@ export const ChatInterface: React.FC = () => {
         }
       }
 
-    } catch (err) {
-      console.error(err);
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'model',
-        text: 'Sorry, I encountered an error processing your request.'
-      }]);
+    } catch (err: any) {
+      console.error("Chat Error:", err);
+      
+      // Construct a helpful error message
+      let errorMsg = "Sorry, I encountered an error.";
+      const rawError = err.toString().toLowerCase();
+      
+      if (rawError.includes('403') || rawError.includes('permission')) {
+        errorMsg = "Error (403): Permission Denied. Please check that Billing is enabled for this project and your API Key is valid.";
+      } else if (rawError.includes('429')) {
+        errorMsg = "Error (429): Too many requests. Please wait a moment.";
+      } else if (err.message) {
+        errorMsg = `Error: ${err.message}`;
+      }
+
+      setMessages(prev => {
+        // Remove the empty loading message if it exists
+        const newHistory = [...prev];
+        const lastMsg = newHistory[newHistory.length - 1];
+        if (lastMsg.role === 'model' && !lastMsg.text) {
+            lastMsg.text = errorMsg;
+            return newHistory;
+        }
+        // Otherwise append new error message
+        return [...newHistory, {
+            id: Date.now().toString(),
+            role: 'model',
+            text: errorMsg
+        }];
+      });
     } finally {
       setIsStreaming(false);
     }
@@ -120,7 +143,7 @@ export const ChatInterface: React.FC = () => {
                    {msg.isThinking ? 'Gemini 3 Pro' : 'Gemini 2.5 Flash'}
                 </div>
               )}
-              <div className="prose prose-invert prose-sm whitespace-pre-wrap leading-relaxed text-gray-300">
+              <div className={`prose prose-invert prose-sm whitespace-pre-wrap leading-relaxed ${msg.text.includes('Error') ? 'text-red-400' : 'text-gray-300'}`}>
                 {msg.text || (isStreaming && msg.role === 'model' ? <span className="animate-pulse text-dark-muted">Thinking...</span> : '')}
               </div>
             </div>
