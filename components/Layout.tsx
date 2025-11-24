@@ -47,8 +47,8 @@ export const Layout: React.FC<LayoutProps> = ({ currentMode, onModeChange, child
 
         <div className="mt-auto flex flex-col gap-4 items-center">
            {/* Credit */}
-           <div className="writing-mode-vertical text-[9px] text-dark-muted opacity-50 tracking-widest transform rotate-180" style={{ writingMode: 'vertical-rl' }}>
-              SOHEYL
+           <div className="writing-mode-vertical text-[9px] text-dark-muted opacity-50 tracking-widest transform rotate-180 whitespace-nowrap" style={{ writingMode: 'vertical-rl' }}>
+              SOHEYL EBRAHIMZADEH
            </div>
            {/* User Profile Mockup */}
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-600 to-gray-800 border border-gray-500 flex items-center justify-center text-xs text-gray-200">

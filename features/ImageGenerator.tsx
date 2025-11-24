@@ -7,19 +7,18 @@ export const ImageGenerator: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(AspectRatio.SQUARE);
   const [resolution, setResolution] = useState<ImageResolution>(ImageResolution.RES_2K);
-  // Default to FALSE (Standard) to ensure free-tier keys work immediately
   const [useProModel, setUseProModel] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [usedFallback, setUsedFallback] = useState(false);
+  const [actualModel, setActualModel] = useState<string | null>(null);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || isGenerating) return;
     setIsGenerating(true);
     setError(null);
-    setUsedFallback(false);
+    setActualModel(null);
 
     try {
       const hasKey = await ensureApiKey();
@@ -30,18 +29,31 @@ export const ImageGenerator: React.FC = () => {
       const result = await generateImage(prompt, aspectRatio, resolution, useProModel);
       if (result && result.images.length > 0) {
         setResultImage(result.images[0]);
-        setUsedFallback(result.usedFallback);
+        setActualModel(result.modelUsed);
         
-        // Cooldown logic handled by isGenerating, but adding extra safety
+        // Cooldown to prevent accidental re-generation
         await new Promise(r => setTimeout(r, 2000));
       } else {
         throw new Error("No image generated.");
       }
     } catch (err: any) {
-      setError(err.message || "Failed to generate image");
+      let msg = err.message || "Failed to generate image";
+      // Sanitize quota errors for display
+      if (msg.includes('quota') || msg.includes('429') || msg.includes('limit')) {
+          msg = "System Overload: All available AI models are currently busy. Please wait 1 minute.";
+      }
+      setError(msg);
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const getModelBadge = () => {
+      if (!actualModel) return null;
+      if (actualModel.includes('pro')) return <span className="text-[10px] bg-purple-900/50 text-purple-300 px-2 py-1 rounded border border-purple-500/30"><i className="fa-solid fa-gem mr-1"></i> Gemini 3 Pro</span>;
+      if (actualModel.includes('imagen')) return <span className="text-[10px] bg-blue-900/50 text-blue-300 px-2 py-1 rounded border border-blue-500/30"><i className="fa-solid fa-paint-brush mr-1"></i> Imagen 3</span>;
+      if (actualModel.includes('exp')) return <span className="text-[10px] bg-green-900/50 text-green-300 px-2 py-1 rounded border border-green-500/30"><i className="fa-solid fa-flask mr-1"></i> Gemini 2.0 Exp</span>;
+      return <span className="text-[10px] bg-gray-800 text-gray-300 px-2 py-1 rounded border border-gray-600"><i className="fa-solid fa-bolt mr-1"></i> Gemini Flash</span>;
   };
 
   return (
@@ -53,11 +65,8 @@ export const ImageGenerator: React.FC = () => {
         <div className="h-14 flex items-center justify-between px-6 border-b border-dark-border bg-dark-bg flex-shrink-0">
             <h1 className="font-semibold text-dark-text text-sm tracking-wide">Text to Image</h1>
             <div className="flex items-center gap-3">
-                 {usedFallback && (
-                     <span className="text-[10px] bg-blue-900/50 text-blue-300 px-2 py-1 rounded border border-blue-500/30 hidden sm:inline-block">
-                        <i className="fa-solid fa-robot mr-1"></i> Generated with Imagen 3 (Fallback)
-                     </span>
-                 )}
+                 {actualModel && getModelBadge()}
+                 
                  {resultImage && (
                      <a href={resultImage} download={`aurora-gen-${Date.now()}.png`} className="text-xs font-medium text-dark-muted hover:text-white transition-colors flex items-center gap-2 bg-dark-surface px-3 py-1.5 rounded-full border border-dark-border">
                         <i className="fa-solid fa-download"></i> <span className="hidden sm:inline">Download</span>
@@ -154,17 +163,10 @@ export const ImageGenerator: React.FC = () => {
                         Pro
                     </button>
                 </div>
-                {useProModel ? (
-                    <p className="text-[10px] text-yellow-500/80 flex items-center gap-1.5 bg-yellow-500/10 p-2 rounded border border-yellow-500/20">
-                        <i className="fa-solid fa-triangle-exclamation"></i> 
-                        <span>Auto-fallback to Imagen enabled.</span>
-                    </p>
-                ) : (
-                    <p className="text-[10px] text-blue-400/80 flex items-center gap-1.5">
-                        <i className="fa-solid fa-check-circle"></i>
-                        <span>Optimized for speed.</span>
-                    </p>
-                )}
+                <p className="text-[10px] text-dark-muted flex items-center gap-1.5 mt-2">
+                    <i className="fa-solid fa-shield-halved text-green-500"></i>
+                    <span>Quota Protection Active: Will auto-switch models if busy.</span>
+                </p>
              </div>
 
              {/* Aspect Ratio */}
@@ -224,21 +226,6 @@ export const ImageGenerator: React.FC = () => {
                     <p className="text-xs text-dark-muted"><i className="fa-solid fa-lock mr-1"></i> High-Res controls locked in Standard mode.</p>
                  </div>
             )}
-
-            {/* Info Box */}
-            <div className="p-4 rounded-lg bg-dark-surface border border-dark-border">
-                <div className="flex items-start gap-3">
-                    <i className="fa-solid fa-lightbulb text-yellow-500/80 mt-0.5 text-xs"></i>
-                    <div>
-                        <p className="text-xs text-gray-300 font-medium mb-1">Prompt Tip</p>
-                        <p className="text-[11px] text-gray-500 leading-relaxed">
-                            {useProModel 
-                             ? 'System will automatically switch to Imagen 3 if Gemini hits quota limits.' 
-                             : 'Standard mode is faster. Switch to Pro for complex text rendering.'}
-                        </p>
-                    </div>
-                </div>
-            </div>
          </div>
       </div>
     </div>

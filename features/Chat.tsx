@@ -10,6 +10,7 @@ export const ChatInterface: React.FC = () => {
   const [isThinkingMode, setIsThinkingMode] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [currentModelName, setCurrentModelName] = useState<string>('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -26,6 +27,7 @@ export const ChatInterface: React.FC = () => {
     const userText = inputValue;
     setInputValue('');
     setIsStreaming(true);
+    setCurrentModelName('');
 
     const newUserMsg: ChatMessage = {
       id: Date.now().toString(),
@@ -49,12 +51,8 @@ export const ChatInterface: React.FC = () => {
         isThinking: isThinkingMode
       }]);
 
-      const { stream, usedFallback } = await sendChatMessage(history, userText, isThinkingMode ? 'thinking' : 'fast');
-      
-      if (usedFallback) {
-        // Optional: Notify user about downgrade?
-        // For now, we just let it happen seamlessly as per "continue working"
-      }
+      const { stream, modelUsed } = await sendChatMessage(history, userText, isThinkingMode ? 'thinking' : 'fast');
+      setCurrentModelName(modelUsed);
 
       let accumulatedText = '';
 
@@ -63,7 +61,7 @@ export const ChatInterface: React.FC = () => {
         if (chunkText) {
           accumulatedText += chunkText;
           setMessages(prev => prev.map(msg => 
-            msg.id === modelMsgId ? { ...msg, text: accumulatedText, isThinking: usedFallback ? false : isThinkingMode } : msg
+            msg.id === modelMsgId ? { ...msg, text: accumulatedText, isThinking: modelUsed.includes('pro') } : msg
           ));
         }
       }
@@ -71,14 +69,13 @@ export const ChatInterface: React.FC = () => {
     } catch (err: any) {
       console.error("Chat Error:", err);
       
-      // Construct a helpful error message
       let errorMsg = "Sorry, I encountered an error.";
       const rawError = err.toString().toLowerCase();
       
-      if (rawError.includes('403') || rawError.includes('permission')) {
-        errorMsg = "Error (403): Permission Denied. Please check that Billing is enabled for this project and your API Key is valid.";
-      } else if (rawError.includes('429')) {
-        errorMsg = "Error (429): Too many requests. I tried to switch models but all are busy. Please wait a moment.";
+      if (rawError.includes('403')) {
+        errorMsg = "Error (403): Permission Denied. Please ensure your API key is valid.";
+      } else if (rawError.includes('429') || rawError.includes('quota')) {
+        errorMsg = "System Overload: I tried 5 different AI models, but all are currently busy. Please wait 1 minute before trying again.";
       } else if (err.message) {
         errorMsg = `Error: ${err.message}`;
       }
@@ -143,10 +140,10 @@ export const ChatInterface: React.FC = () => {
               {msg.role === 'model' && (
                 <div className="flex items-center gap-2 mb-3 text-[10px] font-bold uppercase tracking-wider opacity-60 text-dark-muted">
                    <i className={`fa-solid ${msg.isThinking ? 'fa-brain text-purple-400' : 'fa-bolt text-blue-400'}`}></i>
-                   {msg.isThinking ? 'Gemini 3 Pro' : 'Gemini 2.5 Flash / Lite'}
+                   {currentModelName || (msg.isThinking ? 'Gemini 3 Pro' : 'Gemini Flash')}
                 </div>
               )}
-              <div className={`prose prose-invert prose-sm whitespace-pre-wrap leading-relaxed ${msg.text.includes('Error') ? 'text-red-400' : 'text-gray-300'}`}>
+              <div className={`prose prose-invert prose-sm whitespace-pre-wrap leading-relaxed ${msg.text.includes('Error') || msg.text.includes('Overload') ? 'text-red-400' : 'text-gray-300'}`}>
                 {msg.text || (isStreaming && msg.role === 'model' ? <span className="animate-pulse text-dark-muted">Thinking...</span> : '')}
               </div>
             </div>
